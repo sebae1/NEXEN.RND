@@ -93,18 +93,21 @@ class PanelChart(ScrolledPanel):
         sz_exe_portion.Add(cv_exe_portion, 1, wx.EXPAND)
         pn_exe_portion.SetSizer(sz_exe_portion)
 
+        pn_team = PanelAspectRatio(pn_inner, 2, True)
+        cv_team = PanelCanvas(pn_team)
+        sz_team = wx.BoxSizer(wx.HORIZONTAL)
+        sz_team.Add(cv_team, 1, wx.EXPAND)
+        pn_team.SetSizer(sz_team)
 
         sz_inner = wx.BoxSizer(wx.VERTICAL)
         sz_inner.AddMany((
             ((-1, int(VGAP/2)), 0),
             (pn_header_table, 0, wx.EXPAND), ((-1, VGAP), 0),
             (pn_exe_portion, 0, wx.EXPAND), ((-1, int(VGAP*1.5)), 0),
-            # (pn_lv1, 0, wx.EXPAND), ((-1, VGAP), 0),
-            # (pn_pie, 0, wx.EXPAND), ((-1, VGAP), 0),
-            # (pn_bs, 0, wx.EXPAND), ((-1, VGAP), 0),
+            (pn_team, 0, wx.EXPAND), ((-1, VGAP), 0),
             # (pn_dev, 0, wx.EXPAND),
             # (sz_pie_and_bars, 0, wx.EXPAND),
-            # ((-1, int(VGAP/2)), 0)
+            ((-1, int(VGAP/2)), 0)
         ))
         pn_inner.SetSizer(sz_inner)
 
@@ -122,9 +125,7 @@ class PanelChart(ScrolledPanel):
         self.__st_value_rem    = st_value_rem   
         self.__pn_inner = pn_inner
         self.__cv_exe_portion = cv_exe_portion
-        # self.__cv_lv1  = cv_lv1
-        # self.__cv_pie  = cv_pie
-        # self.__cv_bs   = cv_bs 
+        self.__cv_team = cv_team
         # self.__cv_dev  = cv_dev
         # self.__sz_pie_and_bars = sz_pie_and_bars
 
@@ -170,7 +171,7 @@ class PanelChart(ScrolledPanel):
         # draw_donut(self.__cv_pie.ax[1, 0], title="NATC") # type: ignore
         # draw_donut(self.__cv_pie.ax[1, 1], title="NETC") # type: ignore
         # draw_donut(self.__cv_pie.ax[1, 2], title="NCTC") # type: ignore
-        # draw_stacked_multiple_bar(self.__cv_bs.ax) # type: ignore
+        draw_stacked_multiple_bar(self.__cv_team.ax) # type: ignore
         # draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
         # self.__sz_pie_and_bars.Clear(True)
         # self.__pie_and_bars.clear()
@@ -267,28 +268,28 @@ class PanelChart(ScrolledPanel):
         # draw_donut(self.__cv_pie.ax[1, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "USD") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NATC") # type: ignore
         # draw_donut(self.__cv_pie.ax[1, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "EUR") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NETC") # type: ignore
         # draw_donut(self.__cv_pie.ax[1, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "CNY") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NCTC") # type: ignore
-        # data = {}
-        # bs_code_vs_summation = {b: 0 for b in bs_code_vs_indice}
-        # for cat_pk, indice_cat in first_cat_pk_vs_indice.items():
-        #     cat = LoadedData.cached_cost_category[cat_pk]
-        #     name = cat.name
-        #     data[name] = {}
-        #     mask_cat = df.index.isin(indice_cat)
-        #     for bs_code, indice_bs in bs_code_vs_indice.items():
-        #         mask = mask_cat & df.index.isin(indice_bs)
-        #         value = max(0, df.loc[mask, months].fillna(0).sum().sum()) # 음수는 0으로 처리
-        #         data[name][bs_code] = value
-        #         bs_code_vs_summation[bs_code] += value
-        # sorted_bs_codes = [
-        #     bs for bs, sm in sorted(
-        #         bs_code_vs_summation.items(),
-        #         key=lambda x: -x[1]
-        #     ) if sm > 0
-        # ]
-        # for cat_name in data:
-        #     data[cat_name] = [data[cat_name][bs] for bs in sorted_bs_codes]
-        # xlabels = [LoadedData.cached_cost_ctr[bs].name for bs in sorted_bs_codes]
-        # draw_stacked_multiple_bar(self.__cv_bs.ax, data, xlabels, show_summation_on_top=True) # type: ignore
+        data = {}
+        bs_code_vs_summation = {b: 0 for b in team_code_vs_indice}
+        for cat_pk, indice_cat in first_cat_pk_vs_indice.items():
+            cat = LoadedData.cached_cost_category[cat_pk]
+            name = cat.name
+            data[name] = {}
+            mask_cat = df.index.isin(indice_cat)
+            for bs_code, indice_bs in team_code_vs_indice.items():
+                mask = mask_cat & df.index.isin(indice_bs)
+                value = max(0, df.loc[mask, months].fillna(0).sum().sum()) # 음수는 0으로 처리
+                data[name][bs_code] = value
+                bs_code_vs_summation[bs_code] += value
+        sorted_bs_codes = [
+            bs for bs, sm in sorted(
+                bs_code_vs_summation.items(),
+                key=lambda x: -x[1]
+            ) if sm > 0
+        ]
+        for cat_name in data:
+            data[cat_name] = [data[cat_name][bs] for bs in sorted_bs_codes]
+        xlabels = [LoadedData.cached_cost_ctr[bs].name for bs in sorted_bs_codes]
+        draw_stacked_multiple_bar(self.__cv_team.ax, data, xlabels, show_summation_on_top=True) # type: ignore
 
         # # '직접개발비' 하위 카테고리에 대한 집행 비율
         # category = CostCategory.get_direct_development_cost()
@@ -358,9 +359,7 @@ class PanelChart(ScrolledPanel):
         #     self.__pie_and_bars.append(pn_canvas)
 
         self.__cv_exe_portion.draw()
-        # self.__cv_lv1.draw()
-        # self.__cv_pie.draw()
-        # self.__cv_bs.draw()
+        self.__cv_team.draw()
         # self.__cv_dev.draw()
         self.Layout()
         self.Thaw()
