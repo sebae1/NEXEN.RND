@@ -2,10 +2,14 @@ import numpy as np
 import pandas as pd
 import wx
 
+from io import BytesIO
+from itertools import cycle
 from collections import defaultdict
+
+from PIL import Image
 from wx.lib.scrolledpanel import ScrolledPanel
 
-from util import Config, simplify_won
+from util import Config, simplify_won, pastel_gradient, COLORMAP
 from util.chart import (
     draw_pie, draw_horizontal_overlapped_bar, draw_stacked_single_bar, draw_donut, draw_stacked_multiple_bar,
     TITLE_FONTSIZE, VGAP,
@@ -18,6 +22,69 @@ from ui.component import PanelAspectRatio, PanelCanvas, \
     FONT_COLOR_HIGH_PORTION, FONT_COLOR_MID_PORTION, FONT_COLOR_LOW_PORTION, FONT_COLOR_NEGATIVE_VALUE, \
     OPENAI_MARK_SVG, CLAUDE_MARK_SVG
 
+
+class PanelPieAndBar(PanelAspectRatio):
+    def __init__(self, parent: wx.Window, pie_values: dict[str, float], bar_values: dict[str, float], color: str):
+        super().__init__(parent, 4, True)
+        pn_pie = PanelCanvas(self, save_fig_callback=self.save_image)
+        pn_bar = PanelCanvas(self, save_fig_callback=self.save_image)
+
+        # 파이
+        ax: Axes = pn_pie.ax # type: ignore
+        colors = pastel_gradient(color, max(1, len(pie_values)))
+        draw_pie(ax, pie_values, colors=colors, start_angle=90.0, sort_by="value", desc=True)
+
+        # 바
+        ax: Axes = pn_bar.ax # type: ignore
+        ax.set_yticks([])
+        ax.set_xticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        if bar_values:
+            colors = pastel_gradient(color, len(bar_values))
+            labels = list(bar_values.keys())
+            values = list(bar_values.values())
+            y = np.arange(len(labels))
+            ax.barh(y, values, height=0.6, color=colors, edgecolor="none")
+            ax.set_yticks(y)
+            ax.set_yticklabels(labels)
+            ax.tick_params(axis='y', labelsize=10, left=False)
+            max_v = max(values) if values else 1
+            for yi, val in enumerate(values):
+                ax.text(val + (max_v * 0.01), yi, simplify_won(val), ha='left', va='center')
+            ax.set_ylim(len(bar_values) - 0.5, -0.5)
+            ax.set_xlim(0, max_v * 1.3)
+
+        sz_horz = wx.BoxSizer(wx.HORIZONTAL)
+        sz_horz.AddMany((
+            (pn_pie, 2, wx.EXPAND), ((40, -1), 0),
+            (pn_bar, 3, wx.EXPAND)
+        ))
+        self.SetSizer(sz_horz)
+        pn_pie.draw()
+        pn_bar.draw()
+
+        self.pn_pie = pn_pie
+        self.pn_bar = pn_bar
+
+    def save_image(self, filepath: str):
+        buf_pie = BytesIO()
+        self.pn_pie.fig.savefig(buf_pie, format="png", bbox_inches="tight")
+        buf_pie.seek(0)
+        pil_pie = Image.open(buf_pie)
+
+        buf_bar = BytesIO()
+        self.pn_bar.fig.savefig(buf_bar, format="png", bbox_inches="tight")
+        buf_bar.seek(0)
+        pil_bar = Image.open(buf_bar)
+
+        merged = Image.new(
+            "RGB",
+            (pil_pie.width + pil_bar.width, pil_pie.height)
+        )
+        merged.paste(pil_pie, (0, 0))
+        merged.paste(pil_bar, (pil_pie.width, 0))
+        merged.save(filepath)
 
 class PanelChart(ScrolledPanel):
     def __init__(self, parent: wx.Window):
@@ -36,7 +103,7 @@ class PanelChart(ScrolledPanel):
         # self.__cv_pie.ax[1, 1].set_title("NETC", fontsize=TITLE_FONTSIZE) # type: ignore
         # self.__cv_pie.ax[1, 2].set_title("NCTC", fontsize=TITLE_FONTSIZE) # type: ignore
         # self.__cv_pie.fig.set_constrained_layout_pads(wspace=0.2) # type: ignore
-        # self.__pie_and_bars: list[PanelPieAndBar] = []
+        self._pie_and_bars: list[PanelPieAndBar] = []
         self.draw_empty()
 
     def _set_layout(self):
@@ -105,6 +172,8 @@ class PanelChart(ScrolledPanel):
         sz_dev.Add(cv_dev, 1, wx.EXPAND)
         pn_dev.SetSizer(sz_dev)
 
+        sz_pie_and_bars = wx.BoxSizer(wx.VERTICAL)
+
         sz_inner = wx.BoxSizer(wx.VERTICAL)
         sz_inner.AddMany((
             ((-1, int(VGAP/2)), 0),
@@ -112,7 +181,7 @@ class PanelChart(ScrolledPanel):
             (pn_exe_portion, 0, wx.EXPAND), ((-1, int(VGAP*1.5)), 0),
             (pn_team, 0, wx.EXPAND), ((-1, VGAP), 0),
             (pn_dev, 0, wx.EXPAND),
-            # (sz_pie_and_bars, 0, wx.EXPAND),
+            (sz_pie_and_bars, 0, wx.EXPAND),
             ((-1, int(VGAP/2)), 0)
         ))
         pn_inner.SetSizer(sz_inner)
@@ -133,7 +202,7 @@ class PanelChart(ScrolledPanel):
         self.__cv_exe_portion = cv_exe_portion
         self.__cv_team = cv_team
         self.__cv_dev = cv_dev
-        # self.__sz_pie_and_bars = sz_pie_and_bars
+        self.__sz_pie_and_bars = sz_pie_and_bars
 
     def _bind_events(self):
         return
@@ -179,8 +248,8 @@ class PanelChart(ScrolledPanel):
         # draw_donut(self.__cv_pie.ax[1, 2], title="NCTC") # type: ignore
         draw_stacked_multiple_bar(self.__cv_team.ax) # type: ignore
         draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
-        # self.__sz_pie_and_bars.Clear(True)
-        # self.__pie_and_bars.clear()
+        self.__sz_pie_and_bars.Clear(True)
+        self._pie_and_bars.clear()
         self.PostSizeEvent()
 
     def load_data(self, period: str, bs: CostCtr):
@@ -332,41 +401,41 @@ class PanelChart(ScrolledPanel):
             xlabels = ["전체",] + [LoadedData.cached_cost_ctr[team_code].name for team_code in sorted_team_code_vs_summation]
             draw_stacked_multiple_bar(self.__cv_dev.ax, data_assigned, xlabels, True, True) # type: ignore
 
-        # data = []
-        # for cat_pk, indice in first_cat_pk_vs_indice.items():
-        #     cat = LoadedData.cached_cost_category[cat_pk]
-        #     lv2_data: dict[CostCategory, float] = {}
-        #     lv3_data: dict[CostCategory, float] = {}
-        #     for lv2_cat in cat.children:
-        #         lv2_cat: CostCategory
-        #         lv2_data[lv2_cat] = 0
-        #         for lv3_cat in lv2_cat.children:
-        #             lv3_cat: CostCategory
-        #             indice = cat_pk_vs_indice[lv3_cat.pk]
-        #             lv3_data[lv3_cat] = df.loc[df.index.isin(indice), months].fillna(0).sum().sum()
-        #             lv2_data[lv2_cat] += lv3_data[lv3_cat]
-        #     data.append({
-        #         "lv1_cat": cat,
-        #         "lv2_data": dict(sorted(lv2_data.items(), key=lambda item: -item[1])),
-        #         "lv3_data": dict(sorted(lv3_data.items(), key=lambda item: -item[1]))
-        #     })
-        # data.sort(key=lambda item: item["lv1_cat"].name)
-        # self.__sz_pie_and_bars.Clear(True)
-        # self.__pie_and_bars.clear()
-        # colors = cycle(COLORMAP)
-        # for dat in data:
-        #     pn_canvas = PanelPieAndBar(
-        #         self.__pn_inner,
-        #         {cat.name: values for cat, values in dat["lv2_data"].items()},
-        #         {cat.name: values for cat, values in dat["lv3_data"].items()},
-        #         next(colors)
-        #     )
-        #     self.__sz_pie_and_bars.Add(pn_canvas, 0, wx.EXPAND|wx.TOP, VGAP)
-        #     self.__pie_and_bars.append(pn_canvas)
+        data = []
+        for cat_pk, indice in first_cat_pk_vs_indice.items():
+            cat = LoadedData.cached_cost_category[cat_pk]
+            lv2_data: dict[CostCategory, float] = {}
+            lv3_data: dict[CostCategory, float] = {}
+            for lv2_cat in cat.children:
+                lv2_cat: CostCategory
+                lv2_data[lv2_cat] = 0
+                for lv3_cat in lv2_cat.children:
+                    lv3_cat: CostCategory
+                    indice = cat_pk_vs_indice[lv3_cat.pk]
+                    lv3_data[lv3_cat] = df.loc[df.index.isin(indice), months].fillna(0).sum().sum()
+                    lv2_data[lv2_cat] += lv3_data[lv3_cat]
+            data.append({
+                "lv1_cat": cat,
+                "lv2_data": dict(sorted(lv2_data.items(), key=lambda item: -item[1])),
+                "lv3_data": dict(sorted(lv3_data.items(), key=lambda item: -item[1]))
+            })
+        data.sort(key=lambda item: item["lv1_cat"].name)
+        self.__sz_pie_and_bars.Clear(True)
+        self._pie_and_bars.clear()
+        colors = cycle(COLORMAP)
+        for dat in data:
+            pn_canvas = PanelPieAndBar(
+                self.__pn_inner,
+                {cat.name: values for cat, values in dat["lv2_data"].items()},
+                {cat.name: values for cat, values in dat["lv3_data"].items()},
+                next(colors)
+            )
+            self.__sz_pie_and_bars.Add(pn_canvas, 0, wx.EXPAND|wx.TOP, VGAP)
+            self._pie_and_bars.append(pn_canvas)
 
         self.__cv_exe_portion.draw()
         self.__cv_team.draw()
-        # self.__cv_dev.draw()
+        self.__cv_dev.draw()
         self.Layout()
         self.Thaw()
         self.PostSizeEvent()
