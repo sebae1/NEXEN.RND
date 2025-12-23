@@ -203,7 +203,15 @@ class PanelChart(ScrolledPanel):
     def pie_and_bars(self): return self._pie_and_bars
 
     def _bind_events(self):
-        return
+        self.Bind(wx.EVT_SIZE, self._on_size)
+    
+    def _on_size(self, event):
+        w, _ = self.GetClientSize()
+        if w < 400:
+            self.__pn_inner.SetMinSize(wx.Size(w-40, -1))
+        else:
+            self.__pn_inner.SetMinSize(wx.Size(min(1000, w), -1))
+        event.Skip()
 
     def save_fig_exe_portion(self, filepath: str):
         panel = self.__pn_header_table
