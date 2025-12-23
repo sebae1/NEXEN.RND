@@ -1,23 +1,25 @@
 import os
 import numpy as np
-import matplotlib.pyplot as plt
 import wx
 
 from io import BytesIO
 from datetime import datetime
 from traceback import format_exc
-from typing import Literal, Callable
+from typing import Literal
 from threading import Thread
 from itertools import cycle
 from collections import defaultdict
 
 from PIL import Image
 from wx.lib.scrolledpanel import ScrolledPanel
-from wx.lib.newevent import NewCommandEvent
 from matplotlib.axes import Axes
-from matplotlib.patches import Rectangle
 
 from util import simplify_won, COLORMAP, Config, pastel_gradient
+from util.chart import (
+    draw_pie, draw_horizontal_overlapped_bar, draw_stacked_single_bar, draw_donut, draw_stacked_multiple_bar,
+    TITLE_FONTSIZE, VGAP,
+)
+
 from db import CostCategory, CostElement, CostCtr, LoadedData
 from ai import (
     _CostCategory, _CostElement, _CostCtr, _BudgetByCtr, _BudgetByElement,
@@ -28,530 +30,6 @@ from ui.component import PanelAspectRatio, PanelCanvas, \
     OPENAI_MARK_SVG, CLAUDE_MARK_SVG
 from ui.component.ai_analysis import DialogAIResult, DialogModels
 
-DPI = 80
-TITLE_FONTSIZE = 12
-PIE_OFFSET = -0.5
-PIE_LEGEND_BBOX_TO_ANCHOR = (0.8, 0.5)
-HORIZONTAL_BAR_HEIGHT = 0.6
-LEGEND_KWARGS = {
-    "frameon": False,
-    "labelspacing": 1.5
-}
-VGAP = 40
-
-def hide_axis(ax: Axes):
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.tick_params(left=False, bottom=False)
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-
-def draw_stacked_single_bar(ax: Axes, data: dict[str, float] = {}, title: str = ""):
-    legend_labels = list(data)
-    legend_labels.sort()
-    for label in legend_labels:
-        data[label] = max(0, data[label]) # bar 색상 통일성을 위해 0 이하도 유지해야함
-    # title = ax.get_title()
-    ax.clear()
-    # ax.set_title(title, fontsize=TITLE_FONTSIZE)
-    hide_axis(ax)
-    ax.set_xlim(-1, 1.5)
-    if not np.nansum(list(data.values())):
-        p = ax.bar(0, -1, bottom=0, color="gray")
-    else:
-        labels = list(data)
-        values = np.array(list(data.values()))
-        normalized_values = values/np.sum(values)
-        y = 0
-        colors = {}
-        color_cycle = cycle(COLORMAP)
-        for label in labels[::-1]:
-            colors[label] = next(color_cycle)
-        for idx in list(range(len(labels)))[::-1]:
-            label = labels[idx]
-            norm_value = normalized_values[idx]
-            raw_value = values[idx]
-        # for label, norm_value, raw_value in zip(labels, normalized_values, values):
-            p = ax.bar(0, min(0, -norm_value), label=f"{label}\n{simplify_won(raw_value)}\n{norm_value*100:0.1f}%", bottom=y, fc=colors[label])
-            y -= norm_value
-        ax.legend(loc="center right", **LEGEND_KWARGS)
-    ax.text(
-        p[0].get_x() + p[0].get_width()/2,
-        0.03,
-        title,
-        ha="center",
-        va="bottom",
-        fontsize=TITLE_FONTSIZE
-    )
-
-def draw_pie(
-        ax: Axes, 
-        data: dict[str, float] = {}, 
-        title: str = "", 
-        colors: list[str] | None = None, 
-        start_angle: float = 0.0,
-        sort_by: Literal["label", "value"] = "label",
-        desc: bool = False
-    ):
-    for label in list(data):
-        data[label] = max(0, data[label]) # bar 색상 통일성을 위해 0 이하도 유지해야함
-    # title = ax.get_title()
-    ax.clear()
-    # ax.set_title(title, fontsize=TITLE_FONTSIZE)
-    # hide_axis(ax)
-    ax.text(
-        PIE_OFFSET, 0, title,
-        ha="center", va="center",
-        fontsize=TITLE_FONTSIZE
-    )
-    if not np.nansum(list(data.values())):
-        wedges, _ = ax.pie([1,], colors=["gray",])
-        for w in wedges:
-            w.set_center((PIE_OFFSET, 0))
-        return
-    sort_index = 0 if sort_by == "label" else 1
-    data = dict(sorted(data.items(), key=lambda x: x[sort_index], reverse=desc))
-    labels = data.keys()
-    values = np.array(list(data.values()))
-    normalized_values = values/np.sum(values)
-    wedges, _ = ax.pie(normalized_values, colors=colors, startangle=start_angle)
-    for w in wedges:
-        w.set_center((PIE_OFFSET, 0))
-    ax.legend(
-        wedges,
-        [f"{label}\n{simplify_won(raw_value)}\n{norm_value*100:0.1f}%" for label, norm_value, raw_value in zip(labels, normalized_values, values)],
-        loc="center left",
-        bbox_to_anchor=PIE_LEGEND_BBOX_TO_ANCHOR,
-        **LEGEND_KWARGS
-    )
-
-def draw_donut(ax: Axes, data: dict[str, float] = {}, title: str = ""):
-    for label in list(data):
-        data[label] = max(0, data[label]) # bar 색상 통일성을 위해 0 이하도 유지해야함
-    # title = ax.get_title()
-    ax.clear()
-    # ax.set_title(title, fontsize=TITLE_FONTSIZE)
-    # hide_axis(ax)
-    ax.text(
-        PIE_OFFSET, 0, title,
-        ha="center", va="center",
-        fontsize=TITLE_FONTSIZE
-    )
-    if not np.nansum(list(data.values())):
-        wedges, _ = ax.pie([1,], colors=["gray",], wedgeprops=dict(width=0.5))
-        for w in wedges:
-            w.set_center((PIE_OFFSET, 0))
-        return
-    data = dict(sorted(data.items(), key=lambda x: x[0]))
-    labels = data.keys()
-    values = np.array(list(data.values()))
-    normalized_values = values/np.sum(values)
-    wedges, _ = ax.pie(normalized_values, wedgeprops=dict(width=0.5))
-    for w in wedges:
-        w.set_center((PIE_OFFSET, 0))
-    ax.legend(
-        wedges,
-        [f"{label}\n{simplify_won(raw_value)}\n{norm_value*100:0.1f}%" for label, norm_value, raw_value in zip(labels, normalized_values, values)],
-        loc="center left",
-        bbox_to_anchor=PIE_LEGEND_BBOX_TO_ANCHOR,
-        **LEGEND_KWARGS
-    )
-
-def draw_stacked_multiple_bar(
-        ax: Axes,
-        data: dict[str, np.ndarray] = {},
-        x_labels: list[str,] = [],
-        is_percentage: bool = False,
-        show_summation_on_top: bool = False
-    ):
-    cleaned_data: dict[str, np.ndarray] = {}
-    # value legend label로 정렬하고 음수를 clean
-    legend_labels = list(data)
-    legend_labels.sort()
-    for label in legend_labels:
-        arr = np.array(data[label])
-        # arr[arr < 0] = 0 # TODO 음수 처리
-        cleaned_data[label] = arr
-    title = ax.get_title()
-    ax.clear()
-    ax.set_title(title, fontsize=TITLE_FONTSIZE)
-    hide_axis(ax)
-    total = np.zeros(len(x_labels))
-    for val in cleaned_data.values():
-        total += val
-    if not x_labels or not np.nansum(total):
-        for i in range(8):
-            ax.bar(i, 1, bottom=0, color="gray")
-        ax.set_xlim(-1, 1.1*8)
-        return
-    y = np.zeros(len(x_labels))
-    handles = []
-    labels = []
-    bar_patches: list[Rectangle] = []
-    label_texts: list[str] = []
-    colors = {}
-    color_cycle = cycle(COLORMAP)
-    for cat in legend_labels:
-        colors[cat] = next(color_cycle)
-    for cat in legend_labels[::-1]:
-        values = cleaned_data[cat]
-        eff_values = np.array(values) / (total if is_percentage else 1)
-        p = ax.bar(x_labels, eff_values, label=cat, bottom=y, fc=colors[cat])
-        y += eff_values
-        handles.append(p)
-        labels.append(cat)
-        for i, (rect, v) in enumerate(zip(p.patches, values)):
-            bar_patches.append(rect)
-            label_texts.append(f"{v/total[i]*100:0.1f}%" if is_percentage else simplify_won(v))
-
-    MIN_H_PX = 14
-    fig = ax.figure
-    axes_frac_h = ax.get_position().height
-    axes_px_h = axes_frac_h * fig.get_size_inches()[1] * fig.dpi
-    ymin, ymax = ax.get_ylim()
-    yrange = ymax - ymin if ymax > ymin else 1.0
-
-    for rect, text in zip(bar_patches, label_texts):
-        h_data = abs(rect.get_height())
-        h_px = (h_data / yrange) * axes_px_h
-        if not np.isfinite(h_px) or h_px < MIN_H_PX or h_data == 0:
-            continue
-
-        # 중앙 좌표
-        cx = rect.get_x() + rect.get_width()/2.0
-        cy = rect.get_y() + rect.get_height()/2.0
-
-        # facecolor 밝기 기반 텍스트 색 자동 선택
-        r, g, b, a = rect.get_facecolor()
-        L = 0.2126*r + 0.7152*g + 0.0722*b
-        txt_color = "white" if L < 0.7 else "black"
-
-        ax.text(
-            cx, cy, text,
-            ha="center", va="center",
-            color=txt_color, fontsize=9, clip_on=True
-        )
-
-    # 합계 텍스트 표시
-    if show_summation_on_top:
-        max_y = np.max(y)
-        for i, (value, y_pos) in enumerate(zip(total, y)):
-            ax.text(
-                i, y_pos+max_y*0.02,
-                simplify_won(value),
-                ha="center",
-                va="bottom",
-                fontsize=9,
-                fontweight="bold"
-            )
-
-    ax.set_xlim(-1, 1.1*len(x_labels))
-    ax.set_xticks(range(len(x_labels)))
-    ax.set_xticklabels(x_labels, rotation=45)
-    ax.legend(handles[::-1], labels[::-1], loc="center right", **LEGEND_KWARGS)
-
-def draw_pie_with_annotation(ax: Axes, data: dict[str, float] = {}):
-    """
-    data: {
-        "개발비": {category (str): value: (int)},
-        "고정비": {category (str): value: (int)},
-        "인건비": {category (str): value: (int)}
-    }
-    """
-    for key in list(data):
-        val = data[key]
-        if val <= 0:
-            del data[key]
-    colormaps = {
-        "개발비": COLORMAP[0],
-        "고정비": COLORMAP[1],
-        "인건비": COLORMAP[2]
-    }
-
-    # outer_labels = []
-    # outer_sizes = []
-    labels = []
-    sizes = []
-    colors = []
-    for bigcat, subcats in data.items():
-        cmap = plt.get_cmap(colormaps[bigcat])
-        sub_keys = list(subcats.keys())
-        sub_vals = list(subcats.values())
-        color = cmap(np.linspace(0.4, 0.9, len(sub_vals)))
-        labels.extend(sub_keys)
-        sizes.extend(sub_vals)
-        colors.extend(color)
-
-    title = ax.get_title()
-    ax.clear()
-    ax.set_title(title, fontsize=TITLE_FONTSIZE)
-    # hide_axis(ax)
-    total = 0
-    for cat, items in data.items():
-        total += np.nansum(list(items.values()))
-    if not total:
-        wedges, _ = ax.pie([1,], colors=["gray",])
-        for w in wedges:
-            w.set_center((PIE_OFFSET, 0))
-        return
-
-    wedges, _ = ax.pie(
-        sizes,
-        colors=colors,
-        startangle=-40,
-    )
-
-    # 1단계: 모든 wedge의 각도와 위치 정보 수집
-    wedge_info = []
-    for i, p in enumerate(wedges):
-        # 각 wedge의 중심 각도
-        ang = (p.theta2 - p.theta1)/2. + p.theta1
-        # 각도를 라디안으로 변환
-        ang_rad = np.deg2rad(ang)
-        # wedge 중심의 x, y 좌표
-        y = np.sin(ang_rad)
-        x = np.cos(ang_rad)
-        
-        wedge_info.append({
-            'index': i,
-            'angle': ang,
-            'angle_rad': ang_rad,
-            'x': x,
-            'y': y,
-            'size': sizes[i],
-            'label': labels[i]
-        })
-
-    # 2단계: 각도 순으로 정렬하여 인접한 wedge 파악
-    wedge_info_sorted = sorted(wedge_info, key=lambda w: w['angle'])
-
-    # 3단계: 텍스트 위치 계산 - radius를 조정하여 겹침 방지
-    text_positions = []
-    min_text_distance = 0.15  # 텍스트 간 최소 거리
-    base_radius = 1.3  # 기본 반지름
-    radius_increment = 0.2  # 반지름 증가량
-
-    for idx, w in enumerate(wedge_info_sorted):
-        x_base = w['x']
-        y_base = w['y']
-        
-        # 초기 radius 설정
-        radius = base_radius
-        found_position = False
-        max_attempts = 10  # 최대 시도 횟수
-        
-        # 적절한 위치를 찾을 때까지 radius 증가
-        for attempt in range(max_attempts):
-            # 현재 radius로 텍스트 위치 계산
-            text_x = radius * x_base
-            text_y = radius * y_base
-            
-            # 다른 텍스트들과 거리 확인
-            collision = False
-            for prev_pos in text_positions:
-                # 유클리드 거리 계산
-                distance = np.sqrt((text_x - prev_pos['x'])**2 + (text_y - prev_pos['y'])**2)
-                if distance < min_text_distance:
-                    collision = True
-                    break
-            
-            if not collision:
-                found_position = True
-                break
-            else:
-                # 충돌이 있으면 radius 증가
-                radius += radius_increment
-        
-        text_positions.append({
-            'x': text_x,
-            'y': text_y,
-            'radius': radius,
-            'index': w['index']
-        })
-
-    # 4단계: 연결선을 먼저 그리기 (낮은 z-order)
-    for w in wedge_info:
-        i = w['index']
-        pos = text_positions[i]
-        
-        # 파이 차트 가장자리 점 (반지름 1)
-        edge_x = w['x'] * 1.0
-        edge_y = w['y'] * 1.0
-        
-        # 텍스트 위치
-        text_x = pos['x']
-        text_y = pos['y']
-        
-        # 연결선 그리기 - 파이 중심(0,0)을 지나는 직선
-        # 실제로는 파이 가장자리부터 텍스트까지만 그림
-        ax.plot([edge_x, text_x], [edge_y, text_y], 
-                color='gray', linewidth=0.8, zorder=1)
-
-    # 5단계: annotation 텍스트 박스 그리기 (높은 z-order)
-    bbox_props = dict(boxstyle="square,pad=0.3", fc="w", ec="k", lw=0.72)
-
-    for w in wedge_info:
-        i = w['index']
-        pos = text_positions[i]
-        text_x = pos['x']
-        text_y = pos['y']
-        
-        # 수평 정렬 설정
-        if w['x'] > 0.1:
-            horizontalalignment = "left"
-        elif w['x'] < -0.1:
-            horizontalalignment = "right"
-        else:
-            horizontalalignment = "center"
-        
-        label_text = labels[i]
-        
-        # 텍스트와 박스만 추가 (연결선 없이)
-        ax.text(text_x, text_y, label_text,
-                ha=horizontalalignment, va="center",
-                bbox=bbox_props, zorder=10)  # 높은 z-order
-
-    # 축 범위 조정 - 가장 먼 텍스트를 포함하도록
-    max_radius = max([pos['radius'] for pos in text_positions]) + 0.3
-    ax.set_xlim(-max_radius, max_radius)
-    ax.set_ylim(-max_radius, max_radius)
-    ax.set(aspect="equal")
-
-def draw_multiple_bar(ax: Axes, title: str|None = None, data: dict[str, float] = {}, color: str|None = None):
-    for key in list(data):
-        val = data[key]
-        if val <= 0:
-            del data[key]
-    ax.clear()
-    ax.set_title(title or "", fontsize=TITLE_FONTSIZE)
-    hide_axis(ax)
-    ax.set_xlim(-1, 1.5)
-    if not np.nansum(list(data.values())):
-        for i in range(8):
-            ax.bar(i, 1, bottom=0, color="gray")
-        ax.set_xlim(-1, 1.1*8)
-        return
-    x_labels = list(data)
-    if not x_labels:
-        for i in range(8):
-            ax.bar(i, 1, bottom=0, color="gray")
-        ax.set_xlim(-1, 1.1*8)
-        return
-    values = list(data.values())
-    y = np.zeros(len(x_labels))
-    if color:
-        p = ax.bar(x_labels, values, bottom=y, color=pastel_gradient(color, len(values)))
-    else:
-        p = ax.bar(x_labels, values, bottom=y)
-    ax.bar_label(
-        p,
-        label_type="edge",
-        labels=[simplify_won(val) for val in values]
-    )
-    ax.set_xlim(-1, 1.1*len(x_labels))
-    ax.set_xticks(range(len(x_labels)))
-    ax.set_xticklabels(x_labels, rotation=45)
-
-def draw_horizontal_overlapped_bar(ax: Axes, data: dict[str, tuple[float, float]] = {}):
-    # TODO 음수값 처리
-    # for key in list(data):
-    #     val1, val2 = data[key]
-    #     vals = [val1, val2]
-    #     if val1 < 0:
-    #         vals[0] = 0
-    #     if val2 < 0:
-    #         vals[1] = 0
-    #     data[key] = (val1, val2)
-
-    ax.clear()
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.tick_params(left=False, bottom=False)
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.set_xticklabels([]); ax.set_yticklabels([])
-
-    if not data:
-        for i in range(3):
-            ax.barh(i, 1, left=0, color="gray", height=HORIZONTAL_BAR_HEIGHT)
-        ax.set_ylim(-0.4, 2.4)
-        ax.set_xlim(0, 1.05)
-        return
-
-    # 데이터
-    labels = list(data.keys())
-    values = np.array(list(data.values()), dtype=float)   # shape (N, 2)
-    plan = values[:, 0]
-    execu = values[:, 1]
-    max_val = float(np.max(values)) if values.size else 1.0
-    if max_val <= 0:
-        max_val = 1
-    plan_n = plan / max_val
-    execu_n = execu / max_val
-
-    y = np.arange(len(labels))
-    left_pad = 0.01
-    right_pad = 0.01
-    ax.set_xlim(-left_pad, 1.0 + right_pad)
-    ax.set_ylim(-0.6, len(labels) - 1 + 0.6)
-
-    color1 = COLORMAP[0]
-    color2 = COLORMAP[2]
-
-    arr_plan_n = np.array(plan_n)
-    # arr_plan_n[arr_plan_n < 0] = 0 # TODO 음수값 처리
-    arr_execu_n = np.array(execu_n)
-    # arr_execu_n[arr_execu_n < 0] = 0 # TODO 음수값 처리
-    # 계획/집행 바
-    bars1 = ax.barh(
-        y, arr_plan_n, left=0, height=HORIZONTAL_BAR_HEIGHT,
-        label='계획', color=color1
-    )
-    bars2 = ax.barh(
-        y, arr_execu_n, left=0, height=HORIZONTAL_BAR_HEIGHT*0.6,
-        label='집행', color=color2
-    )
-
-    def fmt_money(v: float) -> str:
-        try:
-            return simplify_won(v)  # 사용자가 정의한 포맷터 있으면 활용
-        except Exception:
-            return f"{v:,.0f}"
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        rates = np.where(plan > 0, execu / plan * 100.0, 0.0)
-
-    # 좌측에 카테고리명만 표시
-    for i, lbl in enumerate(labels):
-        ax.text(
-            -left_pad*0.95, y[i],
-            lbl, ha="right", va="center", fontsize=12, fontweight="bold"
-        )
-
-    # 바 상단에 "계획: 값  집행: 값  집행률: 값  잔액: 값" 일렬 표시
-    renderer = ax.figure.canvas.get_renderer()
-    for i, (p, e, r) in enumerate(zip(plan, execu, rates)):
-        y_top = y[i] + 0.38
-        # 네 개의 항목 정의
-        texts = [
-            ("계획: ", dict(fontweight="bold")),
-            (fmt_money(p) + "    ", dict()),
-            ("실적: ", dict(fontweight="bold")),
-            (fmt_money(e) + "    ", dict()),
-            ("집행률: ", dict(fontweight="bold")),
-            (f"{r:.1f}%    ", dict()),
-            ("잔액: ", dict(fontweight="bold")),
-            (fmt_money(p-e), dict()),
-        ]
-        x_cur = 0.0
-        for t, style in texts:
-            txt = ax.text(
-                x_cur, y_top, t,
-                ha="left", va="center", fontsize=10,
-                **style
-            )
-            bb = txt.get_window_extent(renderer=renderer)
-            dx_axes = bb.width / ax.bbox.width
-            x_cur += dx_axes
 
 class PanelPieAndBar(PanelAspectRatio):
     def __init__(self, parent: wx.Window, pie_values: dict[str, float], bar_values: dict[str, float], color: str):
@@ -560,12 +38,12 @@ class PanelPieAndBar(PanelAspectRatio):
         pn_bar = PanelCanvas(self, save_fig_callback=self.save_image)
 
         # 파이
-        ax: Axes = pn_pie.ax
+        ax: Axes = pn_pie.ax # type: ignore
         colors = pastel_gradient(color, max(1, len(pie_values)))
         draw_pie(ax, pie_values, colors=colors, start_angle=90.0, sort_by="value", desc=True)
 
         # 바
-        ax: Axes = pn_bar.ax
+        ax: Axes = pn_bar.ax # type: ignore
         ax.set_yticks([])
         ax.set_xticks([])
         for spine in ax.spines.values():
@@ -623,16 +101,16 @@ class PanelChart(ScrolledPanel):
         self.__set_layout()
         self.__bind_events()
         self.SetupScrolling(False, True)
-        self.__cv_lv1.ax[0].set_title("R&D", fontsize=TITLE_FONTSIZE)
-        self.__cv_lv1.ax[1].set_title("개발 비용 구성", fontsize=TITLE_FONTSIZE)
-        self.__cv_lv1.ax[2].set_title("OE 비용 구성", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.ax[0, 0].set_title("R&D", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.ax[0, 1].set_title("국내", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.ax[0, 2].set_title("해외", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.ax[1, 0].set_title("NATC", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.ax[1, 1].set_title("NETC", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.ax[1, 2].set_title("NCTC", fontsize=TITLE_FONTSIZE)
-        self.__cv_pie.fig.set_constrained_layout_pads(wspace=0.2)
+        self.__cv_lv1.ax[0].set_title("R&D", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_lv1.ax[1].set_title("개발 비용 구성", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_lv1.ax[2].set_title("OE 비용 구성", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.ax[0, 0].set_title("R&D", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.ax[0, 1].set_title("국내", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.ax[0, 2].set_title("해외", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.ax[1, 0].set_title("NATC", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.ax[1, 1].set_title("NETC", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.ax[1, 2].set_title("NCTC", fontsize=TITLE_FONTSIZE) # type: ignore
+        self.__cv_pie.fig.set_constrained_layout_pads(wspace=0.2) # type: ignore
         self.__pie_and_bars: list[PanelPieAndBar] = []
         self.draw_empty()
 
@@ -805,18 +283,18 @@ class PanelChart(ScrolledPanel):
         self.load_data()
 
     def draw_empty(self):
-        draw_horizontal_overlapped_bar(self.__cv_exe_portion.ax)
-        draw_stacked_single_bar(self.__cv_lv1.ax[0], title="R&D")
-        draw_stacked_single_bar(self.__cv_lv1.ax[1], title="개발 비용 구성")
-        draw_stacked_single_bar(self.__cv_lv1.ax[2], title="OE 비용 구성")
-        draw_donut(self.__cv_pie.ax[0, 0], title="R&D")
-        draw_donut(self.__cv_pie.ax[0, 1], title="국내")
-        draw_donut(self.__cv_pie.ax[0, 2], title="해외")
-        draw_donut(self.__cv_pie.ax[1, 0], title="NATC")
-        draw_donut(self.__cv_pie.ax[1, 1], title="NETC")
-        draw_donut(self.__cv_pie.ax[1, 2], title="NCTC")
-        draw_stacked_multiple_bar(self.__cv_bs.ax)
-        draw_stacked_multiple_bar(self.__cv_dev.ax)
+        draw_horizontal_overlapped_bar(self.__cv_exe_portion.ax) # type: ignore
+        draw_stacked_single_bar(self.__cv_lv1.ax[0], title="R&D") # type: ignore
+        draw_stacked_single_bar(self.__cv_lv1.ax[1], title="개발 비용 구성") # type: ignore
+        draw_stacked_single_bar(self.__cv_lv1.ax[2], title="OE 비용 구성") # type: ignore
+        draw_donut(self.__cv_pie.ax[0, 0], title="R&D") # type: ignore
+        draw_donut(self.__cv_pie.ax[0, 1], title="국내") # type: ignore
+        draw_donut(self.__cv_pie.ax[0, 2], title="해외") # type: ignore
+        draw_donut(self.__cv_pie.ax[1, 0], title="NATC") # type: ignore
+        draw_donut(self.__cv_pie.ax[1, 1], title="NETC") # type: ignore
+        draw_donut(self.__cv_pie.ax[1, 2], title="NCTC") # type: ignore
+        draw_stacked_multiple_bar(self.__cv_bs.ax) # type: ignore
+        draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
         self.__sz_pie_and_bars.Clear(True)
         self.__pie_and_bars.clear()
         # for pn in self.__pie_and_bars:
@@ -850,7 +328,7 @@ class PanelChart(ScrolledPanel):
             currency_code = sr["Currency"]
             elem = LoadedData.cached_cost_element.get(elem_code)
             if elem:
-                cat = LoadedData.cached_cost_category.get(elem.category_pk)
+                cat = LoadedData.cached_cost_category.get(elem.category_pk) # type: ignore
                 if cat:
                     cat_pk_vs_indice[cat.pk].append(idx)
                 first_category = LoadedData.get_first_category(cat)
@@ -896,17 +374,17 @@ class PanelChart(ScrolledPanel):
         else:
             self.__st_value_rem.SetForegroundColour(wx.Colour(0, 0, 0))
         self.__st_value_rem.SetLabel(simplify_won(total_plan-total_actual))
-        draw_horizontal_overlapped_bar(self.__cv_exe_portion.ax, data_exe_portion)
+        draw_horizontal_overlapped_bar(self.__cv_exe_portion.ax, data_exe_portion) # type: ignore
 
-        draw_stacked_single_bar(self.__cv_lv1.ax[0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "R&D")
-        draw_stacked_single_bar(self.__cv_lv1.ax[1], {label: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for label, indice in rnd_vs_indice.items()}, "개발 비용 구성")
-        draw_stacked_single_bar(self.__cv_lv1.ax[2], {label: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for label, indice in oe_vs_indice.items()}, "OE 비용 구성")
-        draw_donut(self.__cv_pie.ax[0, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "R&D")
-        draw_donut(self.__cv_pie.ax[0, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df.index.isin(indice)) & (df["Currency"] == "KRW"), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "국내")
-        draw_donut(self.__cv_pie.ax[0, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df.index.isin(indice)) & (df["Currency"] != "KRW"), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "해외")
-        draw_donut(self.__cv_pie.ax[1, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "USD") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NATC")
-        draw_donut(self.__cv_pie.ax[1, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "EUR") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NETC")
-        draw_donut(self.__cv_pie.ax[1, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "CNY") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NCTC")
+        draw_stacked_single_bar(self.__cv_lv1.ax[0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "R&D") # type: ignore
+        draw_stacked_single_bar(self.__cv_lv1.ax[1], {label: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for label, indice in rnd_vs_indice.items()}, "개발 비용 구성") # type: ignore
+        draw_stacked_single_bar(self.__cv_lv1.ax[2], {label: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for label, indice in oe_vs_indice.items()}, "OE 비용 구성") # type: ignore
+        draw_donut(self.__cv_pie.ax[0, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "R&D") # type: ignore
+        draw_donut(self.__cv_pie.ax[0, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df.index.isin(indice)) & (df["Currency"] == "KRW"), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "국내") # type: ignore
+        draw_donut(self.__cv_pie.ax[0, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df.index.isin(indice)) & (df["Currency"] != "KRW"), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "해외") # type: ignore
+        draw_donut(self.__cv_pie.ax[1, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "USD") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NATC") # type: ignore
+        draw_donut(self.__cv_pie.ax[1, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "EUR") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NETC") # type: ignore
+        draw_donut(self.__cv_pie.ax[1, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "CNY") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NCTC") # type: ignore
         data = {}
         bs_code_vs_summation = {b: 0 for b in bs_code_vs_indice}
         for cat_pk, indice_cat in first_cat_pk_vs_indice.items():
@@ -928,12 +406,12 @@ class PanelChart(ScrolledPanel):
         for cat_name in data:
             data[cat_name] = [data[cat_name][bs] for bs in sorted_bs_codes]
         xlabels = [LoadedData.cached_cost_ctr[bs].name for bs in sorted_bs_codes]
-        draw_stacked_multiple_bar(self.__cv_bs.ax, data, xlabels, show_summation_on_top=True)
+        draw_stacked_multiple_bar(self.__cv_bs.ax, data, xlabels, show_summation_on_top=True) # type: ignore
 
         # '직접개발비' 하위 카테고리에 대한 집행 비율
         category = CostCategory.get_direct_development_cost()
         if not category or not category.children:
-            draw_stacked_multiple_bar(self.__cv_dev.ax)
+            draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
         else:
             data = {}
             total = {}
@@ -963,7 +441,7 @@ class PanelChart(ScrolledPanel):
                 values.insert(0, total[cat_pk])
                 data_assigned[LoadedData.cached_cost_category[cat_pk].name] = values
             xlabels = ["전체",] + [LoadedData.cached_cost_ctr[bs_code].name for bs_code in sorted_bs_code_vs_summation]
-            draw_stacked_multiple_bar(self.__cv_dev.ax, data_assigned, xlabels, True, True)
+            draw_stacked_multiple_bar(self.__cv_dev.ax, data_assigned, xlabels, True, True) # type: ignore
 
         data = []
         for cat_pk, indice in first_cat_pk_vs_indice.items():
