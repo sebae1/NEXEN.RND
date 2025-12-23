@@ -11,7 +11,7 @@ from util.chart import (
     TITLE_FONTSIZE, VGAP,
 )
 
-from db.models import CostCtr
+from db.models import CostCtr, CostCategory
 from db.loaded_data import LoadedData
 
 from ui.component import PanelAspectRatio, PanelCanvas, \
@@ -99,13 +99,19 @@ class PanelChart(ScrolledPanel):
         sz_team.Add(cv_team, 1, wx.EXPAND)
         pn_team.SetSizer(sz_team)
 
+        pn_dev = PanelAspectRatio(pn_inner, 2, True) # 팀별 개발비
+        cv_dev = PanelCanvas(pn_dev)
+        sz_dev = wx.BoxSizer(wx.HORIZONTAL)
+        sz_dev.Add(cv_dev, 1, wx.EXPAND)
+        pn_dev.SetSizer(sz_dev)
+
         sz_inner = wx.BoxSizer(wx.VERTICAL)
         sz_inner.AddMany((
             ((-1, int(VGAP/2)), 0),
             (pn_header_table, 0, wx.EXPAND), ((-1, VGAP), 0),
             (pn_exe_portion, 0, wx.EXPAND), ((-1, int(VGAP*1.5)), 0),
             (pn_team, 0, wx.EXPAND), ((-1, VGAP), 0),
-            # (pn_dev, 0, wx.EXPAND),
+            (pn_dev, 0, wx.EXPAND),
             # (sz_pie_and_bars, 0, wx.EXPAND),
             ((-1, int(VGAP/2)), 0)
         ))
@@ -126,7 +132,7 @@ class PanelChart(ScrolledPanel):
         self.__pn_inner = pn_inner
         self.__cv_exe_portion = cv_exe_portion
         self.__cv_team = cv_team
-        # self.__cv_dev  = cv_dev
+        self.__cv_dev = cv_dev
         # self.__sz_pie_and_bars = sz_pie_and_bars
 
     def _bind_events(self):
@@ -172,7 +178,7 @@ class PanelChart(ScrolledPanel):
         # draw_donut(self.__cv_pie.ax[1, 1], title="NETC") # type: ignore
         # draw_donut(self.__cv_pie.ax[1, 2], title="NCTC") # type: ignore
         draw_stacked_multiple_bar(self.__cv_team.ax) # type: ignore
-        # draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
+        draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
         # self.__sz_pie_and_bars.Clear(True)
         # self.__pie_and_bars.clear()
         self.PostSizeEvent()
@@ -291,40 +297,40 @@ class PanelChart(ScrolledPanel):
         xlabels = [LoadedData.cached_cost_ctr[bs].name for bs in sorted_bs_codes]
         draw_stacked_multiple_bar(self.__cv_team.ax, data, xlabels, show_summation_on_top=True) # type: ignore
 
-        # # '직접개발비' 하위 카테고리에 대한 집행 비율
-        # category = CostCategory.get_direct_development_cost()
-        # if not category or not category.children:
-        #     draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
-        # else:
-        #     data = {}
-        #     total = {}
-        #     summation = {}
-        #     bs_code_vs_summation = {}
-        #     for cat in category.children:
-        #         cat: CostCategory
-        #         data[cat.pk] = {}
-        #         mask_cat = df["Cost Element"].isin(cat_pk_vs_elem_codes[cat.pk])
-        #         for bs_code, indice in bs_code_vs_indice.items():
-        #             mask = (df.index.isin(indice)) \
-        #                 & (mask_cat)
-        #             value = df.loc[mask, months].fillna(0).sum().sum()
-        #             data[cat.pk][bs_code] = value
-        #             if bs_code not in bs_code_vs_summation:
-        #                 bs_code_vs_summation[bs_code] = 0
-        #             bs_code_vs_summation[bs_code] += value
-        #         total[cat.pk] = np.sum(list(data[cat.pk].values()))
-        #     sorted_bs_code_vs_summation = dict(sorted(bs_code_vs_summation.items(), key=lambda items: -items[1]))
-        #     for bs_code in list(sorted_bs_code_vs_summation):
-        #         summation = sorted_bs_code_vs_summation[bs_code]
-        #         if summation <= 0:
-        #             del sorted_bs_code_vs_summation[bs_code]
-        #     data_assigned = {}
-        #     for cat_pk, bs_code_vs_value in data.items():
-        #         values = [bs_code_vs_value[bs_code] for bs_code in sorted_bs_code_vs_summation]
-        #         values.insert(0, total[cat_pk])
-        #         data_assigned[LoadedData.cached_cost_category[cat_pk].name] = values
-        #     xlabels = ["전체",] + [LoadedData.cached_cost_ctr[bs_code].name for bs_code in sorted_bs_code_vs_summation]
-        #     draw_stacked_multiple_bar(self.__cv_dev.ax, data_assigned, xlabels, True, True) # type: ignore
+        # '직접개발비' 하위 카테고리에 대한 집행 비율
+        category = CostCategory.get_direct_development_cost()
+        if not category or not category.children:
+            draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
+        else:
+            data = {}
+            total = {}
+            summation = {}
+            team_code_vs_summation = {}
+            for cat in category.children:
+                cat: CostCategory
+                data[cat.pk] = {}
+                mask_cat = df["Cost Element"].isin(cat_pk_vs_elem_codes[cat.pk])
+                for team_code, indice in team_code_vs_indice.items():
+                    mask = (df.index.isin(indice)) \
+                        & (mask_cat)
+                    value = df.loc[mask, months].fillna(0).sum().sum()
+                    data[cat.pk][team_code] = value
+                    if team_code not in team_code_vs_summation:
+                        team_code_vs_summation[team_code] = 0
+                    team_code_vs_summation[team_code] += value
+                total[cat.pk] = np.sum(list(data[cat.pk].values()))
+            sorted_team_code_vs_summation = dict(sorted(team_code_vs_summation.items(), key=lambda items: -items[1]))
+            for team_code in list(sorted_team_code_vs_summation):
+                summation = sorted_team_code_vs_summation[team_code]
+                if summation <= 0:
+                    del sorted_team_code_vs_summation[team_code]
+            data_assigned = {}
+            for cat_pk, team_code_vs_value in data.items():
+                values = [team_code_vs_value[team_code] for team_code in sorted_team_code_vs_summation]
+                values.insert(0, total[cat_pk])
+                data_assigned[LoadedData.cached_cost_category[cat_pk].name] = values
+            xlabels = ["전체",] + [LoadedData.cached_cost_ctr[team_code].name for team_code in sorted_team_code_vs_summation]
+            draw_stacked_multiple_bar(self.__cv_dev.ax, data_assigned, xlabels, True, True) # type: ignore
 
         # data = []
         # for cat_pk, indice in first_cat_pk_vs_indice.items():
