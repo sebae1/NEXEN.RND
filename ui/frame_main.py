@@ -14,6 +14,7 @@ from ui.component import EVT_UPDATE, NEXEN_LOGO_SVG, WARNING_MARK_SVG
 from ui.panel_dashboard import PanelDashboard
 from ui.panel_viewer import PanelViewer
 from ui.panel_manager import PanelManager
+from ui.panel_bs import PanelBSChart
 from ui.dialog_info import DialogInfo
 from ui.dialog_licence import DialogOSSL
 
@@ -222,9 +223,11 @@ class FrameMain(wx.Frame):
         pn_dashboard = PanelDashboard(nb)
         pn_viewer    = PanelViewer(nb)
         pn_manager   = PanelManager(nb)
+        pn_bs_chart  = PanelBSChart(nb)
         nb.AddPage(pn_dashboard, "대시보드")
         nb.AddPage(pn_viewer   , "뷰어")
         nb.AddPage(pn_manager  , "관리")
+        nb.AddPage(pn_bs_chart , "BS별 차트")
         sz = wx.BoxSizer(wx.HORIZONTAL)
         sz.Add(nb, 1, wx.EXPAND|wx.ALL, 10)
         pn.SetSizer(sz)
@@ -232,6 +235,7 @@ class FrameMain(wx.Frame):
         self.__pn_dashboard = pn_dashboard
         self.__pn_viewer    = pn_viewer   
         self.__pn_manager   = pn_manager  
+        self.__pn_bs_chart  = pn_bs_chart 
 
     def __set_icon(self):
         base = self.FromDIP(32)
