@@ -13,8 +13,9 @@ class Config:
     LAST_USED_CLAUDE_MODEL: str = ""
 
     @classmethod
-    def get_months(cls) -> list[int,]:
-        match Config.PERIOD:
+    def get_months(cls, period: str | None = None) -> list[int,]:
+        period = period or Config.PERIOD
+        match period:
             case "전체":
                 return list(range(1, 13))
             case "1Q":
@@ -26,7 +27,7 @@ class Config:
             case "4Q":
                 return [10, 11, 12]
             case _:
-                return [int(cls.PERIOD[:-1]),]
+                return [int(period[:-1]),]
 
 class ExceptionWithMessage(Exception):
     """의도된 exception으로 traceback이 필요하지 않음"""
