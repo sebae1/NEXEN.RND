@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import wx
 
 from io import BytesIO
@@ -11,16 +10,15 @@ from wx.lib.scrolledpanel import ScrolledPanel
 
 from util import Config, simplify_won, pastel_gradient, COLORMAP
 from util.chart import (
-    draw_pie, draw_horizontal_overlapped_bar, draw_stacked_single_bar, draw_donut, draw_stacked_multiple_bar,
-    TITLE_FONTSIZE, VGAP,
+    draw_pie, draw_horizontal_overlapped_bar, draw_stacked_multiple_bar,
+    VGAP,
 )
 
 from db.models import CostCtr, CostCategory
 from db.loaded_data import LoadedData
 
 from ui.component import PanelAspectRatio, PanelCanvas, \
-    FONT_COLOR_HIGH_PORTION, FONT_COLOR_MID_PORTION, FONT_COLOR_LOW_PORTION, FONT_COLOR_NEGATIVE_VALUE, \
-    OPENAI_MARK_SVG, CLAUDE_MARK_SVG
+    FONT_COLOR_HIGH_PORTION, FONT_COLOR_MID_PORTION, FONT_COLOR_LOW_PORTION, FONT_COLOR_NEGATIVE_VALUE
 
 
 class PanelPieAndBar(PanelAspectRatio):
@@ -93,16 +91,6 @@ class PanelChart(ScrolledPanel):
         self._set_layout()
         self._bind_events()
         self.SetupScrolling(False, True)
-        # self.__cv_lv1.ax[0].set_title("R&D", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_lv1.ax[1].set_title("개발 비용 구성", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_lv1.ax[2].set_title("OE 비용 구성", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.ax[0, 0].set_title("R&D", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.ax[0, 1].set_title("국내", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.ax[0, 2].set_title("해외", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.ax[1, 0].set_title("NATC", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.ax[1, 1].set_title("NETC", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.ax[1, 2].set_title("NCTC", fontsize=TITLE_FONTSIZE) # type: ignore
-        # self.__cv_pie.fig.set_constrained_layout_pads(wspace=0.2) # type: ignore
         self._pie_and_bars: list[PanelPieAndBar] = []
         self.draw_empty()
 
@@ -237,15 +225,6 @@ class PanelChart(ScrolledPanel):
 
     def draw_empty(self):
         draw_horizontal_overlapped_bar(self.__cv_exe_portion.ax) # type: ignore
-        # draw_stacked_single_bar(self.__cv_lv1.ax[0], title="R&D") # type: ignore
-        # draw_stacked_single_bar(self.__cv_lv1.ax[1], title="개발 비용 구성") # type: ignore
-        # draw_stacked_single_bar(self.__cv_lv1.ax[2], title="OE 비용 구성") # type: ignore
-        # draw_donut(self.__cv_pie.ax[0, 0], title="R&D") # type: ignore
-        # draw_donut(self.__cv_pie.ax[0, 1], title="국내") # type: ignore
-        # draw_donut(self.__cv_pie.ax[0, 2], title="해외") # type: ignore
-        # draw_donut(self.__cv_pie.ax[1, 0], title="NATC") # type: ignore
-        # draw_donut(self.__cv_pie.ax[1, 1], title="NETC") # type: ignore
-        # draw_donut(self.__cv_pie.ax[1, 2], title="NCTC") # type: ignore
         draw_stacked_multiple_bar(self.__cv_team.ax) # type: ignore
         draw_stacked_multiple_bar(self.__cv_dev.ax) # type: ignore
         self.__sz_pie_and_bars.Clear(True)
@@ -334,15 +313,6 @@ class PanelChart(ScrolledPanel):
         self.__st_value_rem.SetLabel(simplify_won(total_plan-total_actual))
         draw_horizontal_overlapped_bar(self.__cv_exe_portion.ax, data_exe_portion) # type: ignore
 
-        # draw_stacked_single_bar(self.__cv_lv1.ax[0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "R&D") # type: ignore
-        # draw_stacked_single_bar(self.__cv_lv1.ax[1], {label: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for label, indice in rnd_vs_indice.items()}, "개발 비용 구성") # type: ignore
-        # draw_stacked_single_bar(self.__cv_lv1.ax[2], {label: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for label, indice in oe_vs_indice.items()}, "OE 비용 구성") # type: ignore
-        # draw_donut(self.__cv_pie.ax[0, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[df.index.isin(indice), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "R&D") # type: ignore
-        # draw_donut(self.__cv_pie.ax[0, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df.index.isin(indice)) & (df["Currency"] == "KRW"), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "국내") # type: ignore
-        # draw_donut(self.__cv_pie.ax[0, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df.index.isin(indice)) & (df["Currency"] != "KRW"), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "해외") # type: ignore
-        # draw_donut(self.__cv_pie.ax[1, 0], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "USD") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NATC") # type: ignore
-        # draw_donut(self.__cv_pie.ax[1, 1], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "EUR") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NETC") # type: ignore
-        # draw_donut(self.__cv_pie.ax[1, 2], {LoadedData.cached_cost_category[cat_pk].name: df.loc[(df["Currency"] == "CNY") & (df.index.isin(indice)), months].fillna(0).sum().sum() for cat_pk, indice in first_cat_pk_vs_indice.items()}, "NCTC") # type: ignore
         data = {}
         bs_code_vs_summation = {b: 0 for b in team_code_vs_indice}
         for cat_pk, indice_cat in first_cat_pk_vs_indice.items():
