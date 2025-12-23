@@ -1,9 +1,12 @@
+import os
 import numpy as np
 import wx
 
+from datetime import datetime
 from io import BytesIO
 from itertools import cycle
 from collections import defaultdict
+from traceback import format_exc
 
 from PIL import Image
 from wx.lib.scrolledpanel import ScrolledPanel
@@ -192,12 +195,25 @@ class PanelChart(ScrolledPanel):
         self.__cv_dev = cv_dev
         self.__sz_pie_and_bars = sz_pie_and_bars
 
+    @property
+    def cv_team(self): return self.__cv_team
+    @property
+    def cv_dev(self): return self.__cv_dev
+    @property
+    def pie_and_bars(self): return self._pie_and_bars
+
     def _bind_events(self):
-        return
+        self.Bind(wx.EVT_SIZE, self._on_size)
+    
+    def _on_size(self, evt):
+        w, _ = self.GetClientSize()
+        if w < 400:
+            self.__pn_inner.SetMinSize(wx.Size(w-40, -1))
+        else:
+            self.__pn_inner.SetMinSize(wx.Size(min(1000, w), -1))
+        evt.Skip()
 
     def save_fig_exe_portion(self, filepath: str):
-        # TODO
-        return
         panel = self.__pn_header_table
         width, height = panel.GetClientSize().Get()
         client_dc = wx.ClientDC(panel)
@@ -462,8 +478,32 @@ class PanelBSChart(wx.Panel):
         self.draw()
     
     def _on_save_all_images(self, evt):
-        # TODO
-        return
+        dlg = wx.DirDialog(self, "이미지 일괄 저장", style=wx.DD_DEFAULT_STYLE)
+        ret = dlg.ShowModal()
+        dir_path = dlg.GetPath()
+        dlg.Destroy()
+        if ret != wx.ID_OK:
+            return
+        dlgp = wx.ProgressDialog("안내", "이미지 파일을 생성 중입니다.", parent=None)
+        dlgp.Pulse()
+        filehead = datetime.now().strftime("%y%m%d_%H%M%S")
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            self._pn_chart.save_fig_exe_portion(os.path.join(dir_path, f"{filehead}_01.png"))
+            self._pn_chart.cv_team.fig.savefig(os.path.join(dir_path, f"{filehead}_02.png"), dpi=300)
+            self._pn_chart.cv_dev .fig.savefig(os.path.join(dir_path, f"{filehead}_03.png"), dpi=300)
+            ad = 1
+            for pnb in self._pn_chart.pie_and_bars:
+                pnb.save_image(os.path.join(dir_path, f"{filehead}_{3+ad}.png"))
+                ad += 1
+        except:
+            msg = f"이미지 생성 중 오류가 발생했습니다.\n\n{format_exc()}"
+        else:
+            msg = f"이미지들을 저장 하였습니다."
+        finally:
+            dlgp.Destroy()
+            wx.Yield()
+            wx.CallAfter(wx.MessageBox, msg, "안내", parent=self)
 
     def load_bs_list(self):
         """캐시로부터 BS 목록을 확인하여 ComboBox에 로드"""
