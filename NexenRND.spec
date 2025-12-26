@@ -1,10 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+import sys
+
+from PyInstaller.utils.hooks import collect_all
+
+wx_datas, wx_bins, wx_hidden = collect_all("wx")
+
 
 a = Analysis(
     ['run.py'],
     pathex=[],
-    binaries=[('WebView2Loader.dll', '.')],
+    binaries=wx_bins,
     datas=[],
     hiddenimports=[],
     hookspath=[],
